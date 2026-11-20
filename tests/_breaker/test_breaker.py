@@ -1,6 +1,8 @@
 # Copyright 2021-2025 Zenauth Ltd.
 # SPDX-License-Identifier: Apache-2.0
 
+from functools import partial
+
 import pytest
 
 from cerbos.sdk._breaker import CircuitBreakerError
@@ -206,6 +208,17 @@ def test_unnamed_breaker_has_a_placeholder_name(clock, make_breaker):
     assert make_breaker(clock).name == "unnamed_CircuitBreaker"
 
 
+def test_decorating_a_nameless_callable_keeps_the_placeholder_name(clock, make_breaker):
+    def add(a, b):
+        return a + b
+
+    breaker = make_breaker(clock)
+    wrapped = breaker.decorate(partial(add, 1))
+
+    assert wrapped(2) == 3
+    assert breaker.name == "unnamed_CircuitBreaker"
+
+
 def test_wrapper_keeps_metadata(clock, make_breaker):
     breaker = make_breaker(clock)
 
@@ -259,3 +272,13 @@ def test_decorate_rejects_coroutine_function(clock, make_breaker):
 
     with pytest.raises(ValueError, match="operation"):
         breaker.decorate(operation)
+
+
+def test_decorate_rejects_async_generator_function(clock, make_breaker):
+    breaker = make_breaker(clock)
+
+    async def agen():
+        yield 1
+
+    with pytest.raises(ValueError, match="agen"):
+        breaker.decorate(agen)

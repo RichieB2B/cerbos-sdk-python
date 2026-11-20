@@ -43,6 +43,21 @@ which Python 3.14 deprecates and Python 3.16 removes, and it is not being
 maintained; the state machine lives here instead. The pieces the SDK never used
 are left behind: fallback functions, generator decoration and the global
 registry of circuits.
+
+Differences from the library, all of them deliberate and none of them observable
+through the Hub client: coroutine functions are detected with
+`inspect.iscoroutinefunction`; a function whose body this class cannot observe -- a
+generator, a coroutine or an async generator -- is rejected by
+`CircuitBreaker.decorate` rather than routed to an async wrapper; the state of a
+circuit whose recovery window has passed reads `half-open` where the library said
+`half_open`; `clock` is injectable, which is what lets the tests move time without
+sleeping; and decorating a callable with no `__qualname__` or `__name__` (a
+`functools.partial`) names the circuit with the usual placeholder instead of raising
+`AttributeError`.
+
+Expanding `expected_exception` in `_build_failure_predicate` is also one `try`
+narrower than the library's: it guarded the unpacking of an iterable as well, which
+matters only for an object that iterates but cannot be unpacked.
 """
 
 from collections.abc import Callable
@@ -199,10 +214,14 @@ class CircuitBreaker:
         self._check_function(function)
 
         if self._name is None:
-            try:
-                self._name = function.__qualname__
-            except AttributeError:
-                self._name = function.__name__
+            # A functools.partial and friends carry neither name attribute. The library
+            # let the AttributeError escape here; the placeholder that `name` already
+            # reports for an unnamed breaker says more in CircuitBreakerError.
+            self._name = (
+                getattr(function, "__qualname__", None)
+                or getattr(function, "__name__", None)
+                or self.name
+            )
 
         return self._wrap(function)
 
@@ -221,6 +240,14 @@ class CircuitBreaker:
                 f"{getattr(function, '__qualname__', function)}: wrapping observes the "
                 f"generator's creation, never its body. Use AsyncCircuitBreaker for an "
                 f"'async def' function."
+            )
+
+        if isasyncgenfunction(function):
+            raise ValueError(
+                f"CircuitBreaker cannot wrap the async generator function "
+                f"{getattr(function, '__qualname__', function)}: wrapping observes the "
+                f"generator's creation, never its body. Neither breaker here can watch a "
+                f"generator's body: break the calls made inside it instead."
             )
 
         if iscoroutinefunction(function):
