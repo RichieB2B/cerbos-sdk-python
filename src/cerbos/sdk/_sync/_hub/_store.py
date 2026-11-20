@@ -3,12 +3,12 @@
 from collections.abc import Iterable
 from functools import wraps
 
-import circuitbreaker
 import grpc
 from google.protobuf import json_format
 from grpc_status import rpc_status
 
 from cerbos.cloud.store.v1 import store_pb2, store_pb2_grpc
+from cerbos.sdk._breaker import CircuitBreaker, CircuitBreakerError
 from cerbos.sdk._sync._hub._auth import InvalidCredentialsError
 from cerbos.sdk._sync._hub._client import _CerbosHubClientBase
 from cerbos.sdk.hub.model import Credentials
@@ -57,13 +57,19 @@ def _exclude_errors(thrown_type, thrown_value):
     return False
 
 
-class CircuitBreaker(circuitbreaker.CircuitBreaker):
-    FAILURE_THRESHOLD = 10
-    RECOVERY_TIMEOUT = 60
-    EXPECTED_EXCEPTION = _exclude_errors
+def _hub_circuit_breaker() -> CircuitBreaker:
+    return CircuitBreaker(
+        failure_threshold=10, recovery_timeout=60, expected_exception=_exclude_errors
+    )
 
 
-_CIRCUIT_BREAKER = CircuitBreaker().decorate
+# The five methods that follow share one breaker, so once one of them has failed ten
+# times the others are refused as well until the recovery timeout passes, while
+# list_files below gets a breaker of its own. That is the behaviour of the
+# `circuitbreaker` library these lines replace, kept deliberately: changing it is a
+# change to how the Hub is called, not part of dropping the dependency.
+_CIRCUIT_BREAKER = _hub_circuit_breaker().decorate
+_LIST_FILES_CIRCUIT_BREAKER = _hub_circuit_breaker().decorate
 
 
 def handle_store_errors(method):
@@ -74,7 +80,7 @@ def handle_store_errors(method):
             return method(*args, **kwargs)
         except InvalidCredentialsError as e:
             raise AuthenticationFailedError(e)
-        except circuitbreaker.CircuitBreakerError as e:
+        except CircuitBreakerError as e:
             raise TooManyFailuresError(e)
         except grpc.RpcError as e:
             status = rpc_status.from_call(e)
@@ -343,7 +349,7 @@ class CerbosHubStoreClient(_CerbosHubClientBase):
         return GetFilesResponse(resp)
 
     @handle_store_errors
-    @circuitbreaker.circuit(cls=CircuitBreaker)
+    @_LIST_FILES_CIRCUIT_BREAKER
     def list_files(
         self,
         store_id: str,
