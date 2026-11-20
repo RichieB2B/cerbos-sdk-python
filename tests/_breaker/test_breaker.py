@@ -3,15 +3,7 @@
 
 import pytest
 
-from cerbos.sdk._breaker import CircuitBreaker, CircuitBreakerError
-
-
-def make_breaker(clock, **kwargs) -> CircuitBreaker:
-    """A breaker with the Hub store's tuning, on the test clock."""
-    kwargs.setdefault("failure_threshold", 3)
-    kwargs.setdefault("recovery_timeout", 60)
-    kwargs.setdefault("expected_exception", ValueError)
-    return CircuitBreaker(clock=clock, **kwargs)
+from cerbos.sdk._breaker import CircuitBreakerError
 
 
 def open_the_circuit(breaker, wrapped) -> None:
@@ -27,7 +19,7 @@ class Store:
         return []
 
 
-def test_opens_at_threshold_not_before(clock):
+def test_opens_at_threshold_not_before(clock, make_breaker):
     breaker = make_breaker(clock)
 
     @breaker.decorate
@@ -48,7 +40,7 @@ def test_opens_at_threshold_not_before(clock):
     assert breaker.failure_count == 3
 
 
-def test_success_closes_and_zeroes_count(clock):
+def test_success_closes_and_zeroes_count(clock, make_breaker):
     breaker = make_breaker(clock)
     attempts = []
 
@@ -71,7 +63,7 @@ def test_success_closes_and_zeroes_count(clock):
     assert breaker.last_failure is None
 
 
-def test_rejected_exception_is_not_a_failure_but_resets(clock):
+def test_rejected_exception_is_not_a_failure_but_resets(clock, make_breaker):
     breaker = make_breaker(
         clock,
         expected_exception=lambda exc_type, exc_value: isinstance(
@@ -98,7 +90,7 @@ def test_rejected_exception_is_not_a_failure_but_resets(clock):
     assert breaker.closed
 
 
-def test_open_circuit_does_not_call_the_wrapped_function(clock):
+def test_open_circuit_does_not_call_the_wrapped_function(clock, make_breaker):
     breaker = make_breaker(clock)
     calls = []
 
@@ -116,7 +108,7 @@ def test_open_circuit_does_not_call_the_wrapped_function(clock):
     assert len(calls) == 3
 
 
-def test_half_open_after_recovery_lets_one_call_through(clock):
+def test_half_open_after_recovery_lets_one_call_through(clock, make_breaker):
     breaker = make_breaker(clock)
     calls = []
 
@@ -137,7 +129,7 @@ def test_half_open_after_recovery_lets_one_call_through(clock):
     assert breaker.failure_count == 0
 
 
-def test_failure_while_half_open_reopens_at_once(clock):
+def test_failure_while_half_open_reopens_at_once(clock, make_breaker):
     breaker = make_breaker(clock)
 
     @breaker.decorate
@@ -155,7 +147,7 @@ def test_failure_while_half_open_reopens_at_once(clock):
     assert breaker.open_remaining == 60
 
 
-def test_half_open_boundary_is_inclusive(clock):
+def test_half_open_boundary_is_inclusive(clock, make_breaker):
     breaker = make_breaker(clock)
 
     @breaker.decorate
@@ -171,7 +163,7 @@ def test_half_open_boundary_is_inclusive(clock):
     assert not breaker.opened, "at the recovery timeout the breaker lets a call through"
 
 
-def test_error_message_format(clock):
+def test_error_message_format(clock, make_breaker):
     breaker = make_breaker(clock, failure_threshold=1, recovery_timeout=30, name="boom")
 
     @breaker.decorate
@@ -192,13 +184,13 @@ def test_error_message_format(clock):
     )
 
 
-def test_name_defaults_to_qualname(clock):
+def test_name_defaults_to_qualname(clock, make_breaker):
     breaker = make_breaker(clock)
     breaker.decorate(Store.get_files)
     assert breaker.name == "Store.get_files"
 
 
-def test_name_falls_back_to_dunder_name(clock):
+def test_name_falls_back_to_dunder_name(clock, make_breaker):
     class Legacy:
         __name__ = "legacy"
 
@@ -210,11 +202,11 @@ def test_name_falls_back_to_dunder_name(clock):
     assert breaker.name == "legacy"
 
 
-def test_unnamed_breaker_has_a_placeholder_name(clock):
+def test_unnamed_breaker_has_a_placeholder_name(clock, make_breaker):
     assert make_breaker(clock).name == "unnamed_CircuitBreaker"
 
 
-def test_wrapper_keeps_metadata(clock):
+def test_wrapper_keeps_metadata(clock, make_breaker):
     breaker = make_breaker(clock)
 
     @breaker.decorate
@@ -227,7 +219,7 @@ def test_wrapper_keeps_metadata(clock):
     assert get_files("hub") == ["hub"]
 
 
-def test_predicate_accepts_class_iterable_and_callable(clock):
+def test_predicate_accepts_class_iterable_and_callable(clock, make_breaker):
     by_class = make_breaker(clock, expected_exception=ValueError)
     assert by_class.is_failure(ValueError, ValueError())
     assert not by_class.is_failure(KeyError, KeyError())
@@ -244,12 +236,12 @@ def test_predicate_accepts_class_iterable_and_callable(clock):
     assert not by_callable.is_failure(ValueError, ValueError())
 
 
-def test_predicate_rejects_string(clock):
+def test_predicate_rejects_string(clock, make_breaker):
     with pytest.raises(ValueError, match="Did you mean name?"):
         make_breaker(clock, expected_exception="ValueError")
 
 
-def test_decorate_rejects_generator_function(clock):
+def test_decorate_rejects_generator_function(clock, make_breaker):
     breaker = make_breaker(clock)
 
     def gen():
@@ -259,7 +251,7 @@ def test_decorate_rejects_generator_function(clock):
         breaker.decorate(gen)
 
 
-def test_decorate_rejects_coroutine_function(clock):
+def test_decorate_rejects_coroutine_function(clock, make_breaker):
     breaker = make_breaker(clock)
 
     async def operation():

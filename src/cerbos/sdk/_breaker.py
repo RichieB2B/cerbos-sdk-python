@@ -14,7 +14,12 @@ registry of circuits.
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from inspect import isclass, iscoroutinefunction, isgeneratorfunction
+from inspect import (
+    isasyncgenfunction,
+    isclass,
+    iscoroutinefunction,
+    isgeneratorfunction,
+)
 from math import ceil, floor
 from time import monotonic
 from typing import Any
@@ -255,3 +260,38 @@ class CircuitBreaker:
     @property
     def name(self) -> str:
         return self._name or "unnamed_CircuitBreaker"
+
+
+class AsyncCircuitBreaker(CircuitBreaker):
+    """The same circuit, applied to `async def` functions: the wrapped call is awaited."""
+
+    def _check_function(self, function: Callable[..., Any]) -> None:
+        if isasyncgenfunction(function):
+            raise ValueError(
+                f"AsyncCircuitBreaker cannot wrap the async generator function "
+                f"{getattr(function, '__qualname__', function)}: it would observe the "
+                f"generator's creation, never its body."
+            )
+
+        if not iscoroutinefunction(function):
+            raise ValueError(
+                f"AsyncCircuitBreaker can only wrap an 'async def' function, not "
+                f"{getattr(function, '__qualname__', function)}. Use CircuitBreaker for a "
+                f"plain function."
+            )
+
+    def _wrap(self, function: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(function)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if self.opened:
+                raise CircuitBreakerError(self)
+
+            return await self.call(function, *args, **kwargs)
+
+        return wrapper
+
+    async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Await `func`, recording the outcome on this circuit."""
+
+        with self:
+            return await func(*args, **kwargs)

@@ -3,6 +3,8 @@
 
 import pytest
 
+from cerbos.sdk._breaker import CircuitBreaker
+
 
 class FakeClock:
     """A clock the tests move by hand, so the recovery window costs no sleeping."""
@@ -17,6 +19,31 @@ class FakeClock:
         self.now += seconds
 
 
+def _breaker_factory(cls: type[CircuitBreaker]):
+    """Build breakers of `cls` on the test clock, with the Hub store's tuning scaled down."""
+
+    def build(clock: FakeClock, **kwargs) -> CircuitBreaker:
+        kwargs.setdefault("failure_threshold", 3)
+        kwargs.setdefault("recovery_timeout", 60)
+        kwargs.setdefault("expected_exception", ValueError)
+        return cls(clock=clock, **kwargs)
+
+    return build
+
+
 @pytest.fixture
 def clock() -> FakeClock:
     return FakeClock()
+
+
+@pytest.fixture
+def make_breaker():
+    return _breaker_factory(CircuitBreaker)
+
+
+@pytest.fixture
+def make_async_breaker():
+    # Imported here so the sync tests keep collecting while the async class is missing.
+    from cerbos.sdk._breaker import AsyncCircuitBreaker
+
+    return _breaker_factory(AsyncCircuitBreaker)
