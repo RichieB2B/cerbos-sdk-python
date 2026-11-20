@@ -210,6 +210,7 @@ if __name__ == "__main__":
                 "aread": "read",
                 "aclose": "close",
                 "AioRpcError": "RpcError",
+                "AsyncCircuitBreaker": "CircuitBreaker",
             },
             ignore_classes={
                 "_AsyncAuthInterceptor",
